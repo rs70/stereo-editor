@@ -25,6 +25,17 @@ subdirectory.
 `make clean` simply clears the `obj` directory in case you want to do a fresh build
 from scratch.
 
+Running
+-------
+
+`load "stereo editor",8,1` will load and run Stereo Editor using a fast loader. If the
+fast loader proves incompatible with whatever drive or virtual drive you're using,
+try `load "slow editor",8,1`.
+
+`load "midi player",8,1` runs a (possibly unreleased?) application that plays selected
+SIDs in sequence through a Sequential or Passport MIDI interface. `slow player` is the
+non-fastload boot program for that application.
+
 Memory Map
 ----------
 
