@@ -1,4 +1,4 @@
-all: obj/001 obj/002 obj/003 obj/004 obj/005 obj/006 obj/007 obj/008 obj/009 obj/010 obj/011 obj/012 obj/013 obj/014 \
+all: obj obj/001 obj/002 obj/003 obj/004 obj/005 obj/006 obj/007 obj/008 obj/009 obj/010 obj/011 obj/012 obj/013 obj/014 \
 	obj/stereo-editor obj/slow-editor obj/midi-player obj/slow-player
 
 clean:
@@ -25,6 +25,9 @@ package:
 		-write obj/013 \
 		-write obj/014 \
 		-write orig/001 001.orig
+
+obj:
+	mkdir obj
 
 obj/001: src/kernal.asm
 	as64 -O obj src/kernal.asm
