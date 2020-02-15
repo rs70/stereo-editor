@@ -1,4 +1,4 @@
-all: obj obj/001 obj/002 obj/003 obj/004 obj/005 obj/006 obj/007 obj/008 obj/009 obj/012 obj/013 obj/014 \
+all: obj obj/001 obj/002 obj/003 obj/004 obj/005 obj/006 obj/007 obj/008 obj/009 obj/012 obj/013 obj/014 obj/015 obj/016 \
 	obj/stereo-editor obj/slow-editor obj/midi-player obj/slow-player
 
 clean:
@@ -21,7 +21,9 @@ package:
 		-write obj/009 \
 		-write obj/012 \
 		-write obj/013 \
-		-write obj/014
+		-write obj/014 \
+		-write obj/015 \
+		-write obj/016
 
 obj:
 	mkdir obj
@@ -61,6 +63,12 @@ obj/013: third-party/sidplayer-midi
 
 obj/014: src/midi-player.asm
 	as64 -O obj src/midi-player.asm
+
+obj/015: src/midi-recorder.asm
+	as64 -O obj src/midi-recorder.asm
+
+obj/016: src/chord-buster.asm
+	as64 -O obj src/chord-buster.asm
 
 obj/stereo-editor: src/boot.asm
 	as64 -O obj -o stereo-editor src/boot.asm
