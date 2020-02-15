@@ -22,7 +22,13 @@ ek_dur                   .byte "A","u","w","h","q","8","s","t","9","v"
                          .byte 17,17+128,29,29+128
 ek1 = *
 
-* = $0080
+* = 98
+
+midi_channel             .byte 1,2,3,4,5,6
+midi_vel                 .byte 64,64,64,64,64,64
+midi_prg                 .byte 0,0,0,0,0,0
+midi_tps_sign            .byte 0,0,0,0,0,0
+midi_tps                 .byte 0,0,0,0,0,0
 
 bong_mode                .byte 1
 acc_mode                 .byte 1
@@ -36,15 +42,16 @@ expand_value             .byte 1
 word_mode                .byte 1
 cmd_update               .byte 1
 midi_entry               .byte 0
-midi_channel             .byte 1,2,3,4,5,6
 aux_mode                 .byte 1
 
 * = $00a0
 
-num_menu                 .byte 4
-menu_file                .byte 12,5,8,9,0,0,0,0
+num_menu                 .byte 6
+menu_file                .byte 12,5,8,9,15,16,0,0
 menu_name                .asc "SID Archive Maker$"
                          .asc "Key Customizer$"
                          .asc "Title Block Edit$"
                          .asc "Words File Editor$"
+                         .asc "MIDI Studio$"
+                         .asc "Chord Buster$"
                          .byte 0
