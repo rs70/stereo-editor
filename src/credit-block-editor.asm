@@ -33,7 +33,6 @@ voice_start = $02
 var         = $5c00
 stereo_mode = var+113
 route       = var+114
-midi_channel = $5a00+98
 expand_value = $5a88
 
 ;
@@ -1196,8 +1195,6 @@ restart_sid = *
    lda expand_value
    sta p$expand
 
-   ldx #<midi_channel
-   ldy #>midi_channel
    jsr init_play
 
    lda #63

@@ -115,7 +115,6 @@ dir_info   = $7100       ;Directory storage
 top_heap   = $bf00       ;Top of heap address for SID data.
 applic     = $c000       ;Where transient applications are loaded in.
 buffer_loc = $da00       ;Cut and paste buffer
-
 buffer_size = 1530       ;Maximum cut/paste buffer size
 
 ;
@@ -156,9 +155,6 @@ xadd        = zp+84      ;Value to add to number storage location
 ptr2        = zp+85      ;General use pointer
 temp        = zp+87      ;A temporary value
 temp2       = zp+88      ;Another temporary value
-last_status = zp+89      ;Last MIDI status byte (negative)
-r0          = zp+90
-r1          = zp+92
 
 ;
 ;Global zero page locations (used by new Kernal, too).
@@ -259,7 +255,6 @@ play_speed       = var+228          ;Speed of player
 play_count       = var+229          ;Countdown to next call to player interrupt
 
 bar_color        = var+230          ;6 bar color values for use during play
-pending_pitch    = var+236          ;Step (0-11) to be inserted if high bit set
 
 ;
 ;Temporary values
@@ -507,12 +502,6 @@ cc_key           = eke
 ;Configuration variables (part of "007" file).
 ;
 
-midi_channel     = config+98        ;6 MIDI channel defaults
-midi_vel         = config+104       ;6 MIDI velocity defaults
-midi_prg         = config+110       ;6 MIDI program defaults
-midi_tps_sign    = config+116       ;6 MIDI TPS sign defaults
-midi_tps         = config+122       ;6 MIDI TPS absolute value defaults
-
 cvar             = config+128
 bong_mode        = cvar             ;1=audio feedback of notes, 0=none
 acc_mode         = cvar+1           ;1=search measure for identical accidental
@@ -526,19 +515,16 @@ expand_value     = cvar+8           ;Reverb effect between channels
 word_mode        = cvar+9           ;1=load and use .WDS files, 0=don't
 cmd_update       = cvar+10          ;1=update command during scroll
 midi_entry       = cvar+11          ;1=MIDI note entered, 0=no it's not
-aux_mode         = cvar+12          ;1=use AUX colors, 0=don't
+midi_channel     = cvar+12          ;6 MIDI channel defaults
+aux_mode         = cvar+18          ;1=use AUX colors, 0=don't
 
 num_menu         = config+160
 menu_file        = num_menu+1
 menu_name        = menu_file+8
 
-;-- External pitch modification tables. --
-
-nq_count         = $bf10
-nq_hot           = $bf11
-nq_app           = $bf12
-nq_name          = $bf13
-note_queue       = $bf33
+;
+;Initialization code
+;
 
    sta interface_type
    lda #11
@@ -552,11 +538,10 @@ note_queue       = $bf33
 
    lda #0
    sta applic          ;No transient applications in memory to start with
-   sta nq_count        ;No notes in external queue
+   lda #0
    sta midi_mode
    sta midi_note
    sta midi_phase
-   sta pending_pitch
    sta 198
 
    lda #<buffer_loc    ;Nothing in the cut/paste buffer
@@ -629,7 +614,7 @@ note_queue       = $bf33
 
    jsr print
    .byte defl,18,0,0,128+7
-   .asc "Stereo Editor 2.0"
+   .asc "Stereo Editor 1.0"
    .byte eof,defr,22,18,0,128+7
    .asc "By Robert A. Stoerrle"
    .byte eof,eot
@@ -667,12 +652,10 @@ inter = *
    bpl +
    bit mctrl
    bpl not_midi
-   lda mdata
-   jmp midi_irq
+   jmp midi_irq_passport
 +  bit $de02
    bpl not_midi
-   lda $de03
-   jmp midi_irq
+   jmp midi_irq_seq
 
 not_midi = *
 
@@ -1159,43 +1142,29 @@ qinter = *
    jmp exit_mirq
 
 ;
-;Handle MIDI note input (Passport/Sequential)
+;Handle MIDI note input (Passport)
 ;
 
-midi_irq = *
+midi_irq_passport = *
 
-   pha
    lda midi_phase      ;Branch if $9x already read
-   bne ii
-   pla                 ;Recall byte from interface
-   bpl +
-   sta last_status
+   bne +
+   lda mdata           ;Get byte from interface
    and #$f0
    cmp #$90            ;If not $9x, exit
    bne exit_mirq
    inc midi_phase      ;Signify that $9x was found
    bne exit_mirq
 
-+  pha
-   lda last_status
-   and #$f0
-   cmp #$90
-   beq ji
-   pla
-   jmp exit_mirq
-
-ji inc midi_phase
-   lda #1
-
-ii cmp #1              ;Branch if note already read
-   bne ki
-   pla                 ;Recall note from interface
++  cmp #1              ;Branch if note already read
+   bne +
+   lda mdata           ;Read note from interface
    ora #128
    sta midi_wait       ;Store value +128 until next IRQ
    inc midi_phase
    bne exit_mirq
 
-ki pla                 ;Recall velocity from interface
++  lda mdata           ;Read velocity from interface
    beq +
    lda midi_wait       ;If not zero, store note where main program sees it
    sta midi_note
@@ -1216,6 +1185,37 @@ exit_mirq = *
    rti
 
 ;
+;Handle MIDI note input (Sequential)
+;
+
+midi_irq_seq = *
+
+   lda midi_phase      ;Branch if $9x already read
+   bne +
+   lda $de03           ;Get byte from interface
+   and #$f0
+   cmp #$90            ;If not $9x, exit
+   bne exit_mirq
+   inc midi_phase      ;Signify that $9x was found
+   bne exit_mirq
+
++  cmp #1              ;Branch if note already read
+   bne +
+   lda $de03           ;Read note from interface
+   ora #128
+   sta midi_wait       ;Store value +128 until next IRQ
+   inc midi_phase
+   bne exit_mirq
+
++  lda $de03           ;Read velocity from interface
+   beq +
+   lda midi_wait       ;If not zero, store note where main program sees it
+   sta midi_note
+   lda #0              ;Reset to waiting_for_next_note phase
++  sta midi_phase
+
+   jmp exit_mirq
+
 ;This routine converts a two-byte note or command into its onscreen
 ;representation (icon). Note data should be stored in CURRENT_NOTE.
 ;Based on that note, the D$ variables are set for easy access to note
@@ -1419,8 +1419,6 @@ command_text     .scr "BMPFLTRNGSNCF-X3-OLFOP&V"
                  .scr "P-SF-SSCAAUT"
                  .scr "TEMTPSRTP"
                  .scr "P-WJIFDTNPORMS#"
-
-                 .scr "chnomnplymonvibporstacntstptimmprvelmsgsysclkprg"
 
 bmp_text         .scr "UPDN"
 noyes_text       .scr "NO YES"
@@ -1874,14 +1872,7 @@ get_cmd_icon = *
 cmd_to_icon = *
 
    lda d$command         ;Get command index
-   cmp #aux_cmd
-   bne +
-   jmp handle_aux
-
-c_norm = *
-
-   lda d$command
-+  asl
+   asl
    adc d$command         ;Multiply by 3
    tay
    ldx #0
@@ -2106,18 +2097,6 @@ db lda midi_note
    jsr change_stat
    lda midi_entry
    beq +
-   jmp enter_note
-
-+  lda pending_pitch
-   beq +
-   and #127
-   tay
-   lda #0
-   sta pending_pitch
-   lda step_note,y                ; Convert step index (0-11) to a pitch
-   sta e$note_letter
-   lda step_acc,y                 ; Convert step index to accidental
-   sta e$accidental
    jmp enter_note
 
 +  jsr read_joy
@@ -4304,122 +4283,6 @@ jrz lda #no_dot
 
 jt9 jmp db
 
-;-- Transient utilities can leave one or more notes in the note queue. The
-;   format of an entry varies.
-
-do_note_queue = *
-
-    lda #0
-    jsr set_item
-
-nq_op1 = *
-
-    jsr recall_screen
-    jsr print
-    .byte box,11,eot
-    lda #25
-    sec
-    sbc nq_count
-    lsr
-    sta temp
-    jsr printchar
-    lda #29
-    jsr printchar
-    lda temp
-    sec
-    adc nq_count
-    jsr printchar
-    jsr print
-    .byte 7,col+15,eot
-
-    lda #15
-    ora nq_hot
-    sta rpv+1
-    jsr headerdef
-rpv .byte 3,15+128,1
-    .word return_f7,0,0,0
-    lda nq_count
-    jsr sizedef
-   
-    ldx #0              ;Index into menu names
-    ldy #0              ;Current menu #
--   tya
-    sec
-    adc temp
-    jsr s_itemy
-    adc #yy
-    jsr printchar
-    lda #12
-    jsr s_itemx
-    lda #17
-    jsr s_itemlen
-    lda #<nq_sel
-    jsr s_itemvecl
-    lda #>nq_sel
-    jsr s_itemvech
-    lda #dispatch
-    jsr s_itemtype
-    lda #xx+12
-    jsr printchar
--   lda note_queue+32,x
-    cmp #"$"
-    beq +
-    jsr printchar
-    inx
-    bne -
-+   inx
-    iny
-    cpy nq_count
-    bcc --
-
-    jmp select
-
-nq_sel = *
-
-    jsr read_item
-    asl
-    asl
-    adc #<note_queue
-    sta r0
-    lda #>note_queue
-    adc #0
-    sta r0+1
-
-    ldy #0
-    lda (r0),y
-    cmp #4
-    bne nq1
-    lda #0                         ; Type 4 - remove the utility menu
-    sta nq_count
-nq0 jmp rec_n_ret
-
-nq1 cmp #2
-    bne nq2
-    iny                            ; Type 2 - dispatch to a routine
-    lda (r0),y
-    beq +
-    cmp nq_app
-    bne nq0
-+   iny
-    lda (r0),y
-    sta r1
-    iny
-    lda (r0),y
-    sta r1+1
-    jsr dispatch_r1
-    jmp rec_n_ret
-dispatch_r1 jmp (r1)
-
-nq2 cmp #5
-    bne nq3
-    iny                            ; Type 5 - insert note given step index (0-11)
-    lda (r0), y
-    ora #128
-    sta pending_pitch
-    jmp rec_n_ret
-
-nq3 jmp rec_n_ret
-
 ;
 ;Menu displayed when F7 is pressed.
 ;
@@ -4440,66 +4303,31 @@ return_f7 ldx #$fa
    jsr define_f7
    jmp select
 
-;-- Set up the F7 menu. --
-
 define_f7 = *
 
-   ldy #16
-   lda #eot
--  sta util_text,y
-   dey
-   bpl -
-
-   lda nq_count
-   beq not_there
-
-+  lda nq_app
-   sta temp
-   jsr is_it_there
-   bcc not_there
-
-its_there = *
-
-   ldy #0
--  lda nq_name,y
-   cmp #eot
-   beq +
-   sta util_text,y
-   iny
-   bne -
-
-+         lda #1
-          .byte $2c
-not_there lda #0
-   sta temp
-
    jsr print
-   .byte box,11,8,29,eot
-   lda temp
-   clc
-   adc #18
-   jsr printchar
-   lda #7
-   jsr printchar
-
+   .byte box,11,7,29,19,7,eot
    jsr menudef
    .byte 2,15+128,1
    .word rec_n_ret,0,0,0
-   .byte dispatch,12,9,17
+   .byte dispatch,12,8,17
    .word edit_feat
    .asc "Editing Features"
-   .byte dispatch,12,10,17
+   .byte dispatch,12,9,17
    .word song_para
    .asc "Song Parameters"
-   .byte dispatch,12,11,17
+   .byte dispatch,12,10,17
    .word play_menu
    .asc "Player Options"
-   .byte dispatch,12,12,17
+   .byte dispatch,12,11,17
    .word general_modes
    .asc "General Modes"
-   .byte dispatch,12,13,17
+   .byte dispatch,12,12,17
    .word customizing
    .asc "Customizing Menus"
+   .byte dispatch,12,13,17
+   .word edit_title
+   .asc "Title Block Edit"
    .byte dispatch,12,14,17
    .word save_load_new
    .asc "Load/Save/New"
@@ -4507,21 +4335,16 @@ not_there lda #0
    .word disk_commands
    .asc "Disk Commands"
    .byte dispatch,12,16,17
-   .word midi_menu
-   .asc "MIDI Default Menu"
+   .word edit_words
+   .asc "Words File Editor"
    .byte dispatch,12,17,17
+   .word midi_menu
+   .asc "MIDI Channel Menu"
+   .byte dispatch,12,18,17
    .word spec_options
    .asc "Other Features"
-   .byte dispatch,12,18,17
-   .word do_note_queue
-util_text = *
-   .asc "                 "
    .byte eom
-
-   lda #9
-   clc
-   adc temp
-   jmp sizedef
+   rts
 
 ;
 ;Song parameter menu
@@ -4885,7 +4708,6 @@ load_new_file = *
 
    lda #0
    sta mod_flag
-   jsr accept_midi
    jmp new_file
 
 ;
@@ -4926,6 +4748,16 @@ trans_id .asc "sid/app"
 tid1 = *
 
 ;
+;Load/re-enter key customizer module
+;
+
+key_custom = *
+
+   lda #5
+   jsr enter_trans
+   jmp customizing
+
+;
 ;Load/re_enter a transient module (file number in .A).
 ;
 
@@ -4937,8 +4769,17 @@ enter_trans = *
    pla
    sta ptr+1
 
-   jsr is_it_there
-   bcs etr2
+   lda #0
+   sta move_flag
+   ldy #tid1-trans_id-1
+-  lda applic,y
+   cmp trans_id,y
+   bne +
+   dey
+   bpl -
+   lda applic+7
+   cmp temp
+   beq etr2
 
 +  jsr one_moment_please
    lda voice_start+13    ;Move SID data down if necessary
@@ -5073,7 +4914,7 @@ customizing = *
 
    jsr recall_screen
    jsr print
-   .byte box,10,10,29,13,7,eot
+   .byte box,10,10,29,14,7,eot
    jsr menudef
    .byte 3,15+128,1
    .word return_f7,0,0,0
@@ -5081,6 +4922,9 @@ customizing = *
    .word hardware
    .asc "Hardware Set-Up"
    .byte dispatch,11,12,18
+   .word key_custom
+   .asc "Key Customizer"
+   .byte dispatch,11,13,18
    .word save_config
    .asc "Save Configuration"
    .byte eom
@@ -5197,7 +5041,7 @@ cmove_down = *
    jmp move_down
 
 ;
-;Subtract PTR from .X indexed VOICE_END
+;Subtract PTR from .X indexed VOICE_END
 ;
 
 sub_end = *
@@ -5744,7 +5588,6 @@ clear_this_sid = *
    jsr prompt_for_save
 -  jsr clear_all
    jsr recall_screen
-   jsr accept_midi
    jmp new_file
 
 +  ldx #<save_load_new
@@ -6122,6 +5965,16 @@ insert_buffer = *
    jmp rec_n_ret
 
 ;
+;Edit credit block (transient application)
+;
+
+edit_title = *
+
+   lda #8
+   jsr enter_trans
+   jmp return_f7
+
+;
 ;General mode menu
 ;
 
@@ -6247,6 +6100,98 @@ empty_disk = *
    .byte eot
    jsr abort_cont
    jmp save_load_new
+
+;
+;Call up .WDS file editor transient utility.
+;
+
+edit_words = *
+
+   lda #9
+   jsr enter_trans
+   jmp return_f7
+
+;
+;Special options menu.
+;
+
+spec_options = *
+
+   lda num_menu
+   bne +
+   jmp select
++  lda #0
+   jsr set_item
+
+spec_op1 = *
+
+   jsr recall_screen
+   jsr print
+   .byte box,11,eot
+   lda #25
+   sec
+   sbc num_menu
+   lsr
+   sta temp
+   jsr printchar
+   lda #29
+   jsr printchar
+   lda temp
+   sec
+   adc num_menu
+   jsr printchar
+   jsr print
+   .byte 7,col+15,eot
+
+   jsr headerdef
+   .byte 3,15+128,1
+   .word return_f7,0,0,0
+   lda num_menu
+   jsr sizedef
+   
+   ldx #0              ;Index into menu names
+   ldy #0              ;Current menu #
+-  tya
+   sec
+   adc temp
+   jsr s_itemy
+   adc #yy
+   jsr printchar
+   lda #12
+   jsr s_itemx
+   lda #17
+   jsr s_itemlen
+   lda #<spec_sel
+   jsr s_itemvecl
+   lda #>spec_sel
+   jsr s_itemvech
+   lda #dispatch
+   jsr s_itemtype
+   lda #xx+12
+   jsr printchar
+-  lda menu_name,x
+   cmp #"$"
+   beq +
+   jsr printchar
+   inx
+   bne -
++  inx
+   iny
+   cpy num_menu
+   bcc --
+
+   jmp select
+
+spec_sel = *
+
+   jsr read_item
+   sta key_temp
+   tay
+   lda menu_file,y
+   jsr enter_trans
+   lda key_temp
+   jsr set_item
+   jmp spec_op1
 
 ;
 ;Filename prompt
@@ -6557,20 +6502,18 @@ midi_menu = *
 
    jsr recall_screen
    jsr print
-   .byte box,5,8,35,16,7,col+12,xx+6,yy+9,rvs,tab,16
-   .asc "CHAN  VEL  PRG  TPS"
-   .byte col+15,rvsoff,yy+10,eot
+   .byte box,9,9,30,16,7,col+15,yy+10,eot
 
    ldx #1
 -  jsr print
-   .byte xx+6
+   .byte xx+10
    .asc "Voice "
    .byte eot
    txa
    ora #48
    jsr printchar
    jsr print
-   .asc " :"
+   .asc " : Channel"
    .byte 13,eot
    inx
    cpx #7
@@ -6579,187 +6522,21 @@ midi_menu = *
    jsr menudef
    .byte 4,15,1
    .word return_f7,0,0,0
-
-   .byte numeric,17,10,2,1,16
+   .byte numeric,28,10,2,1,16
    .word midi_channel
-   .byte numeric,17,11,2,1,16
+   .byte numeric,28,11,2,1,16
    .word midi_channel+1
-   .byte numeric,17,12,2,1,16
+   .byte numeric,28,12,2,1,16
    .word midi_channel+2
-   .byte numeric,17,13,2,1,16
+   .byte numeric,28,13,2,1,16
    .word midi_channel+3
-   .byte numeric,17,14,2,1,16
+   .byte numeric,28,14,2,1,16
    .word midi_channel+4
-   .byte numeric,17,15,2,1,16
+   .byte numeric,28,15,2,1,16
    .word midi_channel+5
-
-   .byte numeric,22,10,3,1,127
-   .word midi_vel
-   .byte numeric,22,11,3,1,127
-   .word midi_vel+1
-   .byte numeric,22,12,3,1,127
-   .word midi_vel+2
-   .byte numeric,22,13,3,1,127
-   .word midi_vel+3
-   .byte numeric,22,14,3,1,127
-   .word midi_vel+4
-   .byte numeric,22,15,3,1,127
-   .word midi_vel+5
-
-   .byte numeric,27,10,3,0,127
-   .word midi_prg
-   .byte numeric,27,11,3,0,127
-   .word midi_prg+1
-   .byte numeric,27,12,3,0,127
-   .word midi_prg+2
-   .byte numeric,27,13,3,0,127
-   .word midi_prg+3
-   .byte numeric,27,14,3,0,127
-   .word midi_prg+4
-   .byte numeric,27,15,3,0,127
-   .word midi_prg+5
-
-   .byte string,32,10,1,2
-   .word midi_tps_sign,plus_minus
-   .byte string,32,11,1,2
-   .word midi_tps_sign+1,plus_minus
-   .byte string,32,12,1,2
-   .word midi_tps_sign+2,plus_minus
-   .byte string,32,13,1,2
-   .word midi_tps_sign+3,plus_minus
-   .byte string,32,14,1,2
-   .word midi_tps_sign+4,plus_minus
-   .byte string,32,15,1,2
-   .word midi_tps_sign+5,plus_minus
-
-   .byte numeric,33,10,2,0,24
-   .word midi_tps
-   .byte numeric,33,11,2,0,24
-   .word midi_tps+1
-   .byte numeric,33,12,2,0,24
-   .word midi_tps+2
-   .byte numeric,33,13,2,0,24
-   .word midi_tps+3
-   .byte numeric,33,14,2,0,24
-   .word midi_tps+4
-   .byte numeric,33,15,2,0,24
-   .word midi_tps+5
-
    .byte eom
-
    jsr menuset
    jmp select_0
-
-;-- Plus/Minus text --
-
-plus_minus = *
-
-   .asc "+"
-   .byte eot
-   .asc "-"
-   .byte eot
-
-;
-;Special options menu.
-;
-
-spec_options = *
-
-   lda num_menu
-   bne +
-   jmp select
-+  lda #0
-   jsr set_item
-
-spec_op1 = *
-
-   jsr recall_screen
-   jsr print
-   .byte box,11,eot
-   lda #25
-   sec
-   sbc num_menu
-   lsr
-   sta temp
-   jsr printchar
-   lda #29
-   jsr printchar
-   lda temp
-   sec
-   adc num_menu
-   jsr printchar
-   jsr print
-   .byte 7,col+15,eot
-
-   jsr headerdef
-   .byte 3,15+128,1
-   .word return_f7,0,0,0
-   lda num_menu
-   jsr sizedef
-   
-   ldx #0              ;Index into menu names
-   ldy #0              ;Current menu #
--  tya
-   sec
-   adc temp
-   jsr s_itemy
-   adc #yy
-   jsr printchar
-   lda #12
-   jsr s_itemx
-   lda #17
-   jsr s_itemlen
-   lda #<spec_sel
-   jsr s_itemvecl
-   lda #>spec_sel
-   jsr s_itemvech
-   lda #dispatch
-   jsr s_itemtype
-   lda #xx+12
-   jsr printchar
--  lda menu_name,x
-   cmp #"$"
-   beq +
-   jsr printchar
-   inx
-   bne -
-+  inx
-   iny
-   cpy num_menu
-   bcc --
-
-   jmp select
-
-spec_sel = *
-
-   jsr read_item
-   sta key_temp
-   tay
-   lda menu_file,y
-   jsr enter_trans
-   lda key_temp
-   jsr set_item
-   jmp spec_op1
-
-;-- Return with carry flag set only if application whose number is in TEMP
-;   is in memory. --
-
-is_it_there = *
-
-   lda #0
-   sta move_flag
-   ldy #tid1-trans_id-1
--  lda applic,y
-   cmp trans_id,y
-   bne +
-   dey
-   bpl -
-   lda applic+7
-   cmp temp
-   bne +
-   rts
-+  clc
-   rts
 
 ;
 ;Set up screen and menus for command selection
@@ -9644,8 +9421,8 @@ check_memory = *
 
 ;-- Put this here for posterity ;D --
 
-   .asc "Stereo Editor V1.5 - Written by Robert A. Stoerrle (MALAKAI) - "
-   .asc "February 13, 1990 - Long live Q-Link!"
+   .asc "Stereo Editor V1.0 - Written by Robert A. Stoerrle (MALAKAI) - "
+   .asc "November 24, 1989 - Long live Q-Link!"
 
 play_sid = *
 
@@ -9660,7 +9437,9 @@ play_all = *
    jsr refuse_midi
 
    ldy #5
--  lda orig_color,y
+-  lda midi_channel,y
+   sta play_channel,y
+   lda orig_color,y
    sta bar_color,y
    sta p$aux_val,y
    dey
@@ -9715,8 +9494,6 @@ no_wds = *
    lda route
    sta p$route
 
-   ldx #<midi_channel
-   ldy #>midi_channel
    jsr init_play
 
    lda #%00111111
@@ -10425,7 +10202,7 @@ show_wds = *
 
 ;
 ;Display a line of words (terminated by carriage return, pointed to by PTR).
-;At end, PTR points to start of NEXT line of words.
+;At end, PTR points to start of NEXT line of words.
 ;
 
 disp_line = *
@@ -11352,8 +11129,6 @@ accept_midi = *
    sta $de08
    lda #1
    sta midi_mode
-   lda #0
-   sta last_status
    rts
 +  lda #19
    sta $de00
@@ -11361,8 +11136,6 @@ accept_midi = *
    sta $de00
    lda #1
    sta midi_mode
-   lda #0
-   sta last_status
 am1 rts
 
 ;-- Tell MIDI interface we're refusing notes from it --
@@ -11697,142 +11470,3 @@ disp_aux = *
 ;-- Initial bar colors --
 
 orig_color    .byte 6,14,3,13,7,5
-
-handle_aux = *
-
-    lda d$cmd_value
-    cmp #16
-    bcs +
-    jmp c_norm
-
-+   ldy #0
-    sty d$cmd_value
-    cmp #32
-    bcs +
-    and #15
-    adc #1
-    sta d$cmd_value
-    lda #50                    ;"chn" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #34
-    bcs +
-    and #1
-    sta d$cmd_value
-    lda #51                    ;"omn" command
-    sta d$command
-    jmp c_norm
-
-+   bne +
-    lda #52                    ;"pol" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #40
-    bcs +
-    sbc #34
-    sta d$cmd_value
-    lda #53                    ;"mon" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #42
-    bcs +
-    and #1
-    sta d$cmd_value
-    lda #54                    ;"vib" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #44
-    bcs +
-    and #1
-    sta d$cmd_value
-    lda #55                    ;"por" command
-    sta d$command
-    jmp c_norm
-
-+   bne +
-    lda #56                    ;"sta" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #45
-    bne +
-    lda #57                    ;"cnt" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #46
-    bne +
-    lda #58                    ;"stp" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #47
-    bne +
-    lda #59                    ;"tim" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #64
-    bcs +
-    and #15
-    tay
-    lda table_120,y
-    sta d$cmd_value
-    lda #60                    ;"mpr" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #80
-    bcs +
-    and #15
-    tay
-    lda table_120,y
-    sta d$cmd_value
-    lda #61                    ;"vel" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #96
-    bcs +
-    and #15
-    adc #1
-    sta d$cmd_value
-    lda #62                    ;"msg" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #112
-    bcs +
-    and #15
-    adc #1
-    sta d$cmd_value
-    lda #63                    ;"sys" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #114
-    bcs +
-    and #1
-    sta d$cmd_value
-    lda #64                    ;"clk" command
-    sta d$command
-    jmp c_norm
-
-+   cmp #128
-    bcs +
-    sta d$cmd_value
-    jmp c_norm
-
-+   and #127
-    sta d$cmd_value
-    lda #65                    ;"prg" command
-    sta d$command
-    jmp c_norm
-
-;-- Table of values from 0 to 120. --
-
-table_120      .byte 0,8,16,24,32,40,48,56,64,72,80,88,96,104,112,120
